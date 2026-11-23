@@ -1,7 +1,115 @@
-__pycache__/
+# Environment variables
 .env
+*.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv*/
+venv/
+ENV/
+env/
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
 .venv
+.venv-1
+venv*/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+coverage.xml
+*.cover
+
+# Logs
+*.log
+logs/
+*.log.*
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Data files
+data/
+*.db
+*.sqlite
+*.sqlite3
 resume.json
 resume.pdf
 verify_pdf.py
 test_resume.pdf
+
+# Cache
+.cache/
+*.cache
+npm_cache/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+*.backup
+
+# Node (if any)
+node_modules/
+package-lock.json
+npm-debug.log*
+
+# Bindoc (binary documents)
+bindoc/
+
+# Supabase local
+supabase/.branches
+supabase/.temp
+supabase/.env
+
+# OS generated files
+.AppleDouble
+.LSOverride
+._*
+
+# Thumbnails
+._*
+
+# Files that might appear in the root of a volume
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Directories potentially created on remote AFP share
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk

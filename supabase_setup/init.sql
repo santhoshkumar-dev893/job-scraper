@@ -677,3 +677,18 @@ GRANT ALL ON TABLE "public"."resume_style_settings" TO "anon";
 GRANT ALL ON TABLE "public"."resume_style_settings" TO "authenticated";
 GRANT ALL ON TABLE "public"."resume_style_settings" TO "service_role";
 
+alter table jobs add column if not exists dedupe_key text;
+
+create unique index if not exists jobs_provider_job_id_key
+    on jobs (provider, job_id);
+    
+create index if not exists jobs_dedupe_key_idx on jobs (dedupe_key);
+
+update jobs
+set dedupe_key = md5(
+lower(trim(company)) || '|' ||
+lower(trim(job_title)) || '|' ||
+lower(trim(coalesce(location, ''))) || '|' ||
+lower(trim(coalesce(level, '')))
+)
+where company is not null and job_title is not null;

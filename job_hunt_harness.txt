@@ -1,0 +1,203 @@
+# Skill Extraction Strategy: From Job Descriptions to Match Scores
+
+## 1. Executive Summary
+Our job hunt platform aggregates listings from LinkedIn, company career pages, and other sources, then scores each job against each candidate profile. The scoring engine depends on one critical input: a reliable, structured list of skills from every job description. Today, skill extraction fails on a meaningful share of jobs because listings are inconsistent, unstructured, and sourced from many formats.
+
+This document proposes a layered extraction system that combines taxonomy matching, pattern rules, and LLM-based extraction, with confidence scoring and a fallback path for every job. The goal is to extract skills from the large majority of jobs at high accuracy, at predictable cost, and without ever blocking the match score.
+
+## 2. Problem Statement
+Skill extraction fails for several reasons:
+- **Format variety**: Some listings use bullet lists, others use dense paragraphs, tables, or images.
+- **Synonyms and naming**: "ReactJS", "React.js", and "React" refer to the same skill; "k8s" means Kubernetes.
+- **Implicit skills**: "Build scalable APIs" implies REST or similar, but never names it.
+- **Noise**: Benefits, company history, and legal text contain words that look like skills ("Agile culture", "Oracle" the company).
+- **Missing sections**: Many posts have no "Requirements" heading.
+- **Source differences**: LinkedIn trims content; career pages include full HTML and boilerplate.
+
+## 3. Target Outcomes
+| Metric | Target |
+|---|---|
+| Jobs yielding ≥ 3 extracted skills | ≥ 95% |
+| Extraction precision (sampled audit) | ≥ 90% |
+| Extraction recall on required skills | ≥ 85% |
+| Median extraction latency per job | < 2 seconds (rule-based path) |
+| LLM calls per 100 jobs | ≤ 30 (cost control) |
+| Jobs with no skills after fallback | < 2%, all logged for review |
+
+## 4. Proposed Architecture
+
+### 4.1 Pipeline Overview
+```
+Source Fetchers (LinkedIn, career pages, others)
+        │
+        ▼
+[A] Raw Job Store  ──► stores raw HTML/JSON, source, fetch time
+        │
+        ▼
+[B] Cleaner  ──► strips HTML, boilerplate, nav, legal footers
+        │
+        ▼
+[C] Section Splitter  ──► requirements | responsibilities | nice-to-have | about company
+        │
+        ▼
+[D] Skill Extractor (layered)
+        ├─ D1  Taxonomy matcher (ESCO / O*NET + our own alias list)
+        ├─ D2  Pattern rules (e.g., "X years of Y", "proficiency in", "experience with")
+        ├─ D3  Embedding-based skill linking (map unknown phrases to nearest taxonomy skill)
+        └─ D4  LLM extractor (only for jobs with low confidence)
+        │
+        ▼
+[E] Normalizer & Deduplicator  ──► canonical skill IDs, merged aliases
+        │
+        ▼
+[F] Requirement Classifier  ──► required | preferred | context-only
+        │
+        ▼
+[G] Skill Store  ──► job_id → [{skill_id, importance, confidence, source_span}]
+        │
+        ▼
+Match Engine (profile skills vs job skills → score)
+```
+
+### 4.2 Layer Details
+
+**Layer A — Raw Job Store**
+- Keep the original payload for re-processing when rules improve.
+- Record source, URL, fetch timestamp, and content hash.
+
+**Layer B — Cleaner**
+- Remove scripts, styles, navigation, footers, cookie banners, and "similar jobs" widgets.
+- Normalize whitespace, bullet characters, and Unicode.
+- Detect language; skip non-supported languages and flag them.
+
+**Layer C — Section Splitter**
+- Detect headings using a multilingual heading dictionary: "Requirements", "Qualifications", "What you bring", "Must have", "Nice to have", "Preferred", "Responsibilities".
+- If no headings exist, treat the whole text as a single section with confidence reduced by 15 points.
+- Keep "About us" and "Benefits" out of skill extraction by default.
+
+**Layer D1 — Taxonomy Matcher (primary, fastest)**
+- Use a skill taxonomy such as ESCO or O*NET as the base vocabulary.
+- Add our own alias table: `reactjs → React`, `k8s → Kubernetes`, `js → JavaScript`, `ML → Machine Learning`.
+- Match with word-boundary, case-insensitive regex plus a longest-match-first rule ("Spring Boot" beats "Spring").
+- Handle special characters explicitly: `C++`, `C#`, `.NET`, `Node.js`.
+- Each match records the source span for auditing.
+
+**Layer D2 — Pattern Rules**
+- Capture experience-linked phrases: "3+ years of Python" → Python, min_years = 3.
+- Capture proficiency phrases: "strong understanding of", "proficient in", "hands-on with".
+- Capture skill lists after colons or in parentheses.
+
+**Layer D3 — Embedding Linking**
+- For candidate phrases that did not match the taxonomy (for example, "building event-driven microservices"), compute an embedding and link to the nearest taxonomy skill above a threshold (start at 0.80, tune on the audit set).
+- Mark these matches as `method: embedding` with lower confidence.
+- Cache embeddings for taxonomy entries once; they rarely change.
+
+**Layer D4 — LLM Extractor (targeted)**
+- Trigger only when: the job has no skills after D1–D3, OR the job has no section headings and is longer than 300 words, OR the average confidence is below 0.6.
+- Prompt the model to return only skills from a provided candidate list plus up to 5 new skills, each with a source quote.
+- Reject any LLM output whose quote does not appear verbatim in the job text (anti-hallucination check).
+- Cache results by job content hash.
+
+**Layer E — Normalizer & Deduplicator**
+- Map every extracted item to a canonical skill ID.
+- Merge duplicates and keep the highest-confidence span.
+- Remove generic words that are not skills ("communication", "team player") unless the taxonomy classifies them as skills and the job lists them under requirements.
+
+**Layer F — Requirement Classifier**
+- Required: found under requirement headings, or with "must", "required", "essential", "X+ years".
+- Preferred: under nice-to-have headings, or with "plus", "bonus", "preferred", "desirable".
+- Context-only: mentioned in responsibilities or company text. These are excluded from the skills score by default.
+
+**Layer G — Skill Store**
+- Output schema per job:
+```json
+{
+  "job_id": "string",
+  "source": "linkedin|career_page|other",
+  "extraction_status": "ok|partial|fallback_llm|failed",
+  "avg_confidence": 0.0,
+  "skills": [
+    {
+      "skill_id": "esco:S1234 or internal id",
+      "name": "React",
+      "importance": "required|preferred|context",
+      "min_years": 3,
+      "confidence": 0.92,
+      "method": "taxonomy|pattern|embedding|llm",
+      "source_span": "short quote, max 120 chars"
+    }
+  ],
+  "warnings": []
+}
+```
+
+## 5. Confidence Model
+Each skill gets a confidence score:
+- Taxonomy exact match under a requirement heading: 0.95
+- Taxonomy match elsewhere: 0.80
+- Pattern-based match: 0.85
+- Embedding match: similarity score, capped at 0.75
+- LLM match with verified quote: 0.70
+
+Job-level `avg_confidence` drives whether the match score is shown as normal or with a "low data quality" label.
+
+## 6. Integration with the Match Score
+- The match engine consumes only the Skill Store output, never raw text.
+- Required skills drive the Skills score (40% weight in the rubric).
+- If `extraction_status` is `failed`, the skills component is marked "unavailable" and the overall score is shown with a warning, rather than silently scoring 0.
+- Profile skills go through the same taxonomy and alias pipeline, so both sides use identical canonical IDs. This is the single most important design rule: **match on IDs, never on raw strings.**
+
+## 7. Evaluation & Quality Loop
+1. Build a gold set of 300 job descriptions from all sources, with skills labeled by two reviewers.
+2. Measure precision, recall, and F1 per layer and per source.
+3. Every week, review 50 random extractions and 20 failed jobs. Add missing aliases and taxonomy entries from the failures.
+4. Track `unmatched_phrase` frequency. Phrases appearing in 20+ jobs become alias or taxonomy candidates.
+5. Re-run extraction on stored raw jobs whenever the taxonomy version changes, without re-fetching sources.
+
+## 8. Source-Specific Handling
+- **LinkedIn**: Often truncated. Use the detail page when available; flag jobs with under 80 words as partial.
+- **Career pages**: Strip heavy HTML and legal text; prefer structured data (JSON-LD `JobPosting`, `skills`, `qualifications`) when present. Structured fields are trusted at confidence 0.95.
+- **Other sources**: Adapter per source that maps to the common raw schema.
+
+## 9. Cost and Performance
+- Layers A–F run locally or on cheap compute and handle the majority of jobs.
+- LLM use is limited to the D4 trigger conditions. Expected: under 15–30% of jobs, depending on source quality.
+- Batch processing overnight for new jobs; on-demand extraction for jobs a user opens.
+- Store every extraction version so reprocessing is cheap.
+
+## 10. Risks and Mitigations
+| Risk | Mitigation |
+|---|---|
+| Taxonomy gaps for new technologies | Frequency-driven alias review; LLM fallback; embedding linking |
+| Source markup changes break parsers | Schema validation per source; alert when extraction rate drops |
+| False positives from company names or product names | Context rules and a deny-list of company names per source |
+| LLM hallucinated skills | Verbatim quote check; reject unverified output |
+| Cost spikes | Caching by content hash; per-batch LLM budget cap |
+
+## 11. Phased Roadmap
+**Phase 1 (Weeks 1–2): Foundation**
+- Raw store, cleaner, section splitter, taxonomy matcher with alias table.
+- Gold set of 100 jobs; baseline metrics.
+
+**Phase 2 (Weeks 3–4): Coverage**
+- Pattern rules, embedding linking, requirement classifier.
+- Source adapters for LinkedIn and career pages.
+- Target: 90% of jobs with ≥ 3 skills.
+
+**Phase 3 (Weeks 5–6): Intelligence**
+- Targeted LLM fallback with quote verification.
+- Confidence model and "low data quality" labels in UI.
+- Target: 95% coverage, precision ≥ 90%.
+
+**Phase 4 (Ongoing): Improvement**
+- Weekly review loop, taxonomy updates, cost monitoring, new source onboarding.
+
+## 12. Key Decisions for Discussion
+1. Taxonomy choice: ESCO (broad, multilingual, free) or O*NET (US-focused, detailed)?
+2. Which sources are in scope for the first release?
+3. Acceptable LLM spend per 1,000 jobs?
+4. Should "soft skills" count toward the score, or only be displayed?
+5. Who performs the weekly review and label audit?
+
+## 13. Conclusion
+Skill extraction is the foundation of trustworthy match scores. With a layered design, shared canonical IDs for both profiles and jobs, verified LLM use, and a continuous evaluation loop, the platform can extract skills from the vast majority of jobs at high quality and predictable cost. The result: every score is backed by evidence, and every gap is clearly explained.

@@ -34,12 +34,12 @@ LLM_API_KEY = (
 # --- LLM Settings ---
 # Use any model supported by LiteLLM (gemini, openai/gpt-4o-mini, groq/llama-3.3-70b-versatile)
 # Full list of supported models & naming: https://docs.litellm.ai/docs/providers
-LLM_MODEL = os.environ.get("LLM_MODEL") or "gemini"
+LLM_MODEL = os.environ.get("LLM_MODEL") or "fireworks_ai/accounts/fireworks/models/glm-5p3-flash"
 
 # --- Search Configuration ---
-LINKEDIN_SEARCH_QUERIES = ["maths lecturer", "statistics lecturer", "maths teacher", "Maths assistant professor", "Maths professor"]
-LINKEDIN_LOCATION = "Singapore"
-LINKEDIN_GEO_ID = 102454443      # Singapore: 102454443, Dubai: 100205264
+LINKEDIN_SEARCH_QUERIES = ["AI Engineer", "Senior Software Engineer", "Software Engineer"]
+LINKEDIN_LOCATION = "India"
+LINKEDIN_GEO_ID = 102713980      # Singapore: 102454443, Dubai: 100205264
 LINKEDIN_JOB_TYPE = "F" # F=Full-time, C=Contract, P=Part-time, T=Temporary, I=Internship
 LINKEDIN_JOB_POSTING_DATE = "r86400" # r86400=Past 24h, r604800=Past week
 LINKEDIN_F_WT = "1,2,3" # 1=Onsite, 2=Remote, 3=Hybrid (use "1,2,3" or [1, 2, 3] for all, or None for no filter)
@@ -82,3 +82,52 @@ JOB_CHECK_LIMIT = 50
 ACTIVE_CHECK_TIMEOUT = 20
 ACTIVE_CHECK_MAX_RETRIES = 2
 ACTIVE_CHECK_RETRY_DELAY = 10
+
+
+
+MAX_DESCRIPTION_CHARS = 12_000
+MAX_KNOWN_SKILLS = 80
+MAX_KNOWN_SKILL_CHARS = 60
+MAX_NAME_CHARS = 60
+MAX_EVIDENCE_CHARS = 300
+MAX_SKILLS_OUT = 40
+MIN_CONFIDENCE = 0.5
+MAX_ATTEMPTS = 3
+REQUEST_TIMEOUT_MS = 500_000
+MAX_OUTPUT_TOKENS = 4096
+
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+GEMINI_MODEL = os.getenv(
+    "GEMINI_MODEL",
+    "gemini-3.8-flash"
+)
+
+# =================================================================
+# 4. PROMPT CACHING CONFIGURATION (New Section)
+# =================================================================
+
+# Prompt Caching Settings
+ENABLE_PROMPT_CACHING = os.getenv("ENABLE_PROMPT_CACHING", "false").lower() == "true"
+
+# Cache Provider: Choose one based on your LLM provider
+# "claude" = Anthropic Claude (RECOMMENDED - best TTL + pricing)
+# "openai" = OpenAI GPT-4 Turbo
+# "gemini" = Google Gemini  
+# None = Disable caching
+CACHE_PROVIDER = os.getenv("CACHE_PROVIDER", "fireworks")
+
+# Cache Size Limits (tokens)
+CACHE_MAX_TOKENS_SYSTEM = 1000          # System instruction cache size
+CACHE_MAX_TOKENS_SKILLS = 3000          # Known skills cache size
+CACHE_MIN_TOKENS_TO_CACHE = 500         # Don't cache if smaller than this
+
+# Cache Invalidation Strategy
+CACHE_REVALIDATE_INTERVAL = 86400       # Revalidate every 24 hours (seconds)
+CACHE_REVALIDATE_JOB_COUNT = 100        # Or revalidate every N jobs
+CACHE_INVALIDATE_ON_NEW_SKILL = True    # Invalidate when new skill discovered
+
+# Metrics & Monitoring
+CACHE_TRACK_METRICS = True              # Track cache hit/miss rates
+CACHE_LOG_HITS = True                   # Log cache hits for debugging

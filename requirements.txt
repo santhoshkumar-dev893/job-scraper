@@ -1,12 +1,33 @@
-requests
-beautifulsoup4
-python-dotenv
-supabase
-httpx
-pdfplumber
-google-genai
-litellm
-pydantic
-playwright
-markdownify
-reportlab
+# Core Web Scraping
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+httpx>=0.25.0
+
+# Environment & Configuration
+python-dotenv>=1.0.0
+
+# Database
+supabase>=2.3.0
+
+# PDF Processing
+pdfplumber>=0.10.0
+pypdfium2>=4.20.0
+reportlab>=4.0.0
+
+# LLM & AI
+litellm>=1.0.0
+pydantic>=2.0.0
+
+# NLP & Skill Extraction
+spacy>=3.7.0
+
+# HTML/Markdown Processing
+markdownify>=0.11.0
+
+# Testing (optional, for development)
+pytest>=7.4.0
+
+# Note: google-genai and playwright are not currently used in the codebase
+# Uncomment if needed in the future:
+# google-genai>=0.3.0
+# playwright>=1.40.0

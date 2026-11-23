@@ -1,7 +1,7 @@
 from supabase import create_client, Client
 import config # Import configuration
 from typing import Optional, Any, Dict
-from models import Resume
+from models import Resume, MatchResult
 import datetime # Import datetime module
 import logging # Import logging
 
@@ -715,5 +715,165 @@ def get_active_resume_style() -> dict:
         logging.warning(f"Could not fetch resume style from Supabase: {e}. Using default.")
 
     return DEFAULT_THEME_CONFIG
+
+
+
+# =====================================================================
+# JOB MATCHES TABLE FUNCTIONS (NEW - Improved Workflow)
+# =====================================================================
+
+def save_job_matches(supabase: Client, match_result: MatchResult, profile_id: str) -> bool:
+    """
+    Save a job match result to the job_matches table.
+    
+    Args:
+        supabase: Supabase client
+        match_result: MatchResult object from job_scorer
+        profile_id: UUID of the profile
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        match_data = {
+            "job_id": match_result.job_id,
+            "profile_id": profile_id,
+            "ats_score": match_result.ats_score,
+            "gate_passed": match_result.gate_passed,
+            "confidence_score": match_result.confidence_score,
+            "heuristic_score": match_result.heuristic_score,
+            "llm_score": match_result.llm_score,
+            "matched_skills": match_result.matched_skills,
+            "missing_skills": match_result.missing_skills,
+            "mandatory_missing": match_result.mandatory_missing,
+            "new_skills": match_result.new_skills,
+            "path": match_result.path.value if hasattr(match_result.path, 'value') else str(match_result.path),
+            "data_quality": match_result.data_quality.value if hasattr(match_result.data_quality, 'value') else str(match_result.data_quality),
+            "warnings": match_result.warnings,
+            "created_at": datetime.datetime.utcnow().isoformat(),
+            "updated_at": datetime.datetime.utcnow().isoformat(),
+        }
+        
+        response = supabase.table("job_matches").insert(match_data).execute()
+        
+        if response.data:
+            logging.info(f"✅ Saved match: job_id={match_result.job_id}, gate_passed={match_result.gate_passed}")
+            return True
+        else:
+            logging.error(f"❌ Failed to save match for job {match_result.job_id}")
+            return False
+            
+    except Exception as e:
+        logging.error(f"Error saving job match: {e}")
+        return False
+
+
+def record_pending_skills(
+    supabase: Client,
+    profile_id: str,
+    job_id: str,
+    skill_name: str,
+    requirement: str,
+    evidence: str
+) -> bool:
+    """
+    Record a new skill discovered by LLM for human review.
+    
+    Note: New skills are stored in job_matches.new_skills (JSON), 
+          not in a separate pending_skills table.
+          Use vw_pending_skill_review view to query jobs with new skills.
+    
+    Args:
+        supabase: Supabase client
+        profile_id: UUID of the profile
+        job_id: ID of the job
+        skill_name: Name of the new skill
+        requirement: Whether it's 'mandatory', 'nice_to_have', 'unspecified'
+        evidence: Context where the skill was found
+        
+    Returns:
+        True (new skills are already saved in job_matches.new_skills)
+    """
+    # New skills are already saved in job_matches.new_skills JSON column
+    # No separate table needed - just log for reference
+    logging.info(f"📝 New skill discovered: {skill_name} for job {job_id} (stored in job_matches.new_skills)")
+    return True
+
+
+def get_user_profiles(supabase: Client, is_active: bool = True) -> list:
+    """Get user profiles from DB"""
+    try:
+        response = supabase.table("user_profiles").select("*").eq("is_active", is_active).execute()
+        return response.data
+    except Exception as e:
+        logging.error(f"Error fetching profiles: {e}")
+        return []
+
+
+def get_active_jobs(supabase: Client, limit: int = 100) -> list:
+    """Get active jobs from DB"""
+    try:
+        response = supabase.table("jobs").select("*").eq("is_active", True).limit(limit).execute()
+        return response.data
+    except Exception as e:
+        logging.error(f"Error fetching jobs: {e}")
+        return []
+
+def filter_new_candidates(source: str, candidate_jobs: list) -> list:
+    """
+    Filter out jobs that already exist in Supabase.
+    
+    This function:
+    1. Fetches existing job IDs and company-title pairs from database
+    2. Compares incoming candidates against existing jobs
+    3. Returns only NEW jobs (those not in the database)
+    
+    Uses two filtering strategies:
+    - Primary: job_id matching (most reliable if job_id is stable)
+    - Secondary: company + job_title matching (fallback if job_id differs)
+    
+    Args:
+        source: Job source identifier (e.g., "linkedin", "careers_future")
+        candidate_jobs: List of job dicts with keys like 'job_id', 'company', 'job_title'
+        
+    Returns:
+        List of new job dicts not already in Supabase
+    """
+    if not candidate_jobs:
+        logging.info(f"No candidates to filter from {source}")
+        return []
+    
+    print(candidate_jobs)
+    print("candidate_jobs")
+    
+    # Fetch existing jobs from database
+    existing_ids, existing_company_title_pairs = get_existing_jobs_from_supabase()
+
+    
+    new_candidates = []
+    duplicates = []
+    
+    for job in candidate_jobs:
+        job_id = str(job['job_id']) if job['job_id'] else None
+        company = job['company'].strip().lower() if job['company'] else None
+        job_title = job['job_title'].strip().lower() if job['job_title'] else None
+        
+        # Strategy 1: Check by job_id (most reliable)
+        if job_id and job_id in existing_ids:
+            duplicates.append(job_id)
+            continue
+        
+        # Strategy 2: Check by company + job_title (fallback)
+        if company and job_title and (company, job_title) in existing_company_title_pairs:
+            duplicates.append(job_id or f"{company} - {job_title}")
+            continue
+        
+        # This is a new candidate
+        new_candidates.append(job)
+    
+    if duplicates:
+        logging.info(f"Filtered {len(duplicates)} duplicates from {source}: {duplicates[:5]}{'...' if len(duplicates) > 5 else ''}")
+    
+    return new_candidates
 
 

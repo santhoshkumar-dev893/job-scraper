@@ -292,7 +292,7 @@ class LLMClient:
         logger.error(f"All {max_attempts} attempts failed for model {failed_model}")
         raise last_exception
 
-
+#--------------- This client will help for scoring rules-----------------------#
 def _create_client(
     model: str,
     api_key: Optional[str] = None,
@@ -316,3 +316,7 @@ primary_client = _create_client(
     model=config.LLM_MODEL,
     api_key=config.LLM_API_KEY,
 )
+
+
+
+

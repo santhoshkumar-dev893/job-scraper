@@ -1,0 +1,198 @@
+-- ============================================================================
+-- COMPREHENSIVE DATABASE MIGRATION GUIDE
+-- ============================================================================
+-- Purpose: Update database schema to remove redundant tables and clean up
+--          user_profiles for improved job_matches workflow
+-- Created: November 7, 2026
+-- Status: Ready for deployment to Supabase
+-- ============================================================================
+
+-- STEP-BY-STEP EXECUTION GUIDE:
+-- ============================================================================
+-- 
+-- Execute these migrations in this exact order:
+-- 
+-- 1. remove_profile_job_scores.sql
+--    - Drops the profile_job_scores table and all dependent views
+--    - Removes RLS policies on profile_job_scores
+-- 
+-- 2. cleanup_user_profiles.sql
+--    - Removes redundant columns from user_profiles
+--    - Removes outdated profile relationship columns from jobs table
+--    - Ensures user_profiles has all required columns
+--    - Recreates proper indexes
+-- 
+-- 3. add_job_matches_table.sql (already executed or execute if not done)
+--    - Creates the new job_matches table with improved schema
+--    - Creates indexes and RLS policies
+--    - Creates analytical views
+--
+-- ============================================================================
+-- WHAT'S BEING REMOVED AND WHY
+-- ============================================================================
+--
+-- REMOVED TABLE:
+-- - profile_job_scores
+--   Why: Functionality is now in job_matches table which is more detailed
+--        and better handles the improved workflow
+--
+-- REMOVED FROM user_profiles:
+-- - profile_score_threshold (scoring threshold is now per-query logic)
+-- - auto_filter_enabled (all active profiles are auto-filtered)
+-- - career_goals (not used in improved workflow)
+-- - preferred_company_size (low utility, can be captured in industry_preferences)
+-- - red_flag_keywords (moved to avoid_industries and avoid_skills)
+-- - min_skill_match_percentage (replaced by gate logic in job_matches)
+--
+-- REMOVED FROM jobs:
+-- - profile_id (jobs are now scored against profiles via job_matches join)
+-- - profile_score (scoring is in job_matches.ats_score)
+-- - profile_filter_reason (filtering is in job_matches.gate_passed)
+-- - profile_filter_timestamp (timestamps in job_matches table)
+--
+-- ============================================================================
+-- WHAT REMAINS IN user_profiles (CORE SCHEMA)
+-- ============================================================================
+--
+-- IDENTITY & CONTACT:
+-- - id (UUID)
+-- - name
+-- - email
+-- - phone
+-- - current_location
+-- - timezone
+-- - created_at, updated_at, last_used_at
+--
+-- CAREER GOALS & PREFERENCES:
+-- - target_job_titles (array of desired roles)
+-- - target_companies (array of preferred companies)
+-- - willing_locations (array of acceptable locations)
+-- - willing_remote_level (remote/hybrid/onsite/any)
+-- - years_of_experience
+-- - current_level (entry/mid/senior/lead/executive)
+-- - target_level (target career level)
+--
+-- SKILLS (for heuristic extraction):
+-- - primary_skills (must-have technical skills)
+-- - secondary_skills (nice-to-have skills)
+-- - must_have_skills (mandatory skills for matching)
+-- - avoid_skills (skills to avoid in recommendations)
+--
+-- JOB PREFERENCES:
+-- - job_type_preference (Full Time/Contract/Part-time)
+-- - min_salary
+-- - currency
+--
+-- COMPANY PREFERENCES:
+-- - company_size_preference
+-- - industry_preferences
+-- - avoid_industries
+-- - exclude_companies
+--
+-- WORK STYLE & BENEFITS:
+-- - work_culture_keywords
+-- - benefits_importance
+-- - willing_relocation
+-- - willing_travel
+--
+-- PROFILE STATUS:
+-- - is_active (whether this profile is in use)
+-- - notes (user notes about the profile)
+-- - form_stage (current stage in multi-step form)
+--
+-- ============================================================================
+-- HOW job_matches REPLACES profile_job_scores
+-- ============================================================================
+--
+-- OLD: profile_job_scores had:
+--   - profile_score (0-100) -- NOW: job_matches.ats_score
+--   - career_fit (0-20) -- NOW: part of ats_score calculation
+--   - skills_fit (0-20) -- NOW: part of ats_score calculation
+--   - seniority_fit (0-20) -- NOW: part of ats_score calculation
+--   - location_fit (0-20) -- NOW: part of ats_score calculation
+--   - culture_fit (0-20) -- NOW: part of ats_score calculation
+--   - should_apply (boolean) -- NOW: job_matches.gate_passed
+--
+-- NEW: job_matches has:
+--   - ats_score (0-100) - unified score from all factors
+--   - gate_passed (boolean) - whether profile meets minimum mandatory skills
+--   - confidence_score - how confident we are in the match
+--   - heuristic_score - score from pattern matching
+--   - llm_score - score from LLM enrichment
+--   - matched_skills (JSONB array) - skills found
+--   - missing_skills (JSONB array) - skills not found
+--   - mandatory_missing (JSONB array) - mandatory skills missing
+--   - new_skills (JSONB array) - skills discovered by LLM pending review
+--   - path - which extraction method was used
+--   - data_quality - assessment of job data quality
+--   - warnings - any issues encountered during matching
+--
+-- ============================================================================
+-- VERIFICATION QUERIES (run after migration)
+-- ============================================================================
+--
+-- 1. Verify profile_job_scores is removed:
+--    SELECT table_name FROM information_schema.tables 
+--    WHERE table_name = 'profile_job_scores';
+--    -- Should return 0 rows
+--
+-- 2. Verify job_matches table exists:
+--    SELECT table_name FROM information_schema.tables 
+--    WHERE table_name = 'job_matches';
+--    -- Should return 1 row
+--
+-- 3. Verify redundant columns are removed from user_profiles:
+--    SELECT column_name FROM information_schema.columns 
+--    WHERE table_name = 'user_profiles' 
+--    AND column_name IN ('profile_score_threshold', 'auto_filter_enabled', 
+--                        'career_goals', 'preferred_company_size', 
+--                        'red_flag_keywords', 'min_skill_match_percentage');
+--    -- Should return 0 rows
+--
+-- 4. Verify redundant columns are removed from jobs:
+--    SELECT column_name FROM information_schema.columns 
+--    WHERE table_name = 'jobs' 
+--    AND column_name IN ('profile_id', 'profile_score', 
+--                        'profile_filter_reason', 'profile_filter_timestamp');
+--    -- Should return 0 rows
+--
+-- 5. Count profiles and recent job matches:
+--    SELECT 
+--      (SELECT COUNT(*) FROM user_profiles WHERE is_active = true) as active_profiles,
+--      (SELECT COUNT(*) FROM job_matches WHERE gate_passed = true) as matched_jobs,
+--      (SELECT COUNT(*) FROM job_matches) as total_evaluations;
+--
+-- ============================================================================
+-- ROLLBACK PLAN (if needed)
+-- ============================================================================
+--
+-- If something goes wrong, you'll need to restore from a backup.
+-- These migrations are NOT easily reversible without the backup.
+-- 
+-- The migrations are designed to be safe (using DROP ... IF EXISTS),
+-- but they permanently remove tables and columns.
+--
+-- ============================================================================
+-- POST-MIGRATION ACTIONS
+-- ============================================================================
+--
+-- After successful migration:
+--
+-- 1. Update scraper.py to use job_matches table
+--    - Replace calls to insert into profile_job_scores
+--    - Use new supabase_utils functions: save_job_matches(), record_pending_skills()
+--
+-- 2. Update any dashboards/reports that used profile_job_scores views
+--    - Use new job_matches views instead:
+--      * vw_matched_jobs_by_profile
+--      * vw_pending_skill_review
+--      * vw_matching_analytics
+--
+-- 3. Test end-to-end workflow with real job data
+--
+-- 4. Monitor job_matches table for:
+--    - gate_passed distribution (should be ~5-10% pass rate initially)
+--    - path distribution (should be mostly heuristic_only)
+--    - ats_score distribution (should be bell-curved)
+--
+-- ============================================================================
