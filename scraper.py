@@ -1,5 +1,6 @@
 import argparse
 import sys
+import os
 import re
 import requests
 from bs4 import BeautifulSoup
@@ -7,7 +8,13 @@ from datetime import datetime, timedelta
 import time 
 import random 
 import logging
-import config
+
+# Auto-detect GitHub Actions environment and use optimized config
+if os.environ.get("GITHUB_ACTIONS") == "true":
+    import config_github_actions as config
+else:
+    import config
+
 import user_agents
 import supabase_utils
 from dataclasses import asdict, is_dataclass

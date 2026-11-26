@@ -20,7 +20,7 @@ on:
       limit:
         description: 'Maximum jobs per query'
         required: false
-        default: '50'
+        default: '10'
         type: string
 
 env:
@@ -29,7 +29,7 @@ env:
 jobs:
   scrape-jobs:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 50
     
     concurrency:
       group: daily-scraper
@@ -50,37 +50,43 @@ jobs:
         with:
           path: ~/.cache/spacy
           key: spacy-model-v1
+          restore-keys: |
+            spacy-model-
       
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -r requirements.txt --no-cache-dir
       
-      - name: Download spaCy model
+      - name: Download spaCy model (cached)
         run: |
-          python -m spacy download en_core_web_sm
+          python -m spacy download en_core_web_sm 2>&1 | grep -v "already installed" || true
       
-      - name: Run job scraper
+      - name: Create logs directory
+        run: mkdir -p logs
+      
+      - name: Run job scraper with timeout protection
+        timeout-minutes: 45
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
           FIREWORKS_API_KEY: ${{ secrets.FIREWORKS_API_KEY }}
           LLM_MODEL: ${{ secrets.LLM_MODEL }}
+          PYTHONUNBUFFERED: '1'
         run: |
           python scraper.py \
             --source ${{ github.event.inputs.source || 'all' }} \
-            --limit ${{ github.event.inputs.limit || '50' }}
+            --limit ${{ github.event.inputs.limit || '10' }} 2>&1 | tee logs/scraper.log
       
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: scraper-logs-${{ github.run_number }}
-          path: |
-            *.log
-            logs/
+          path: logs/
           retention-days: 30
+          if-no-files-found: ignore
       
       - name: Notify on failure
         if: failure()
@@ -91,6 +97,6 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               title: `Job Scraper Failed - ${new Date().toISOString()}`,
-              body: 'The daily job scraper workflow failed. Check the logs for details.',
+              body: 'The daily job scraper workflow failed. Check the logs (artifact) for details.',
               labels: ['automation', 'bug']
             })
